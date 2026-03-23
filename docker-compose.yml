@@ -1,0 +1,70 @@
+# Docker Compose configuration for local development of the Cloud IDE backend.
+# This runs the API server and a test workspace container on a shared network.
+
+services:
+  # The main Cloud IDE backend API server.
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    environment:
+      - HTTP_PORT=8080
+      - GRPC_PORT=9090
+      - HOST_ADDR=0.0.0.0
+      - JWT_SECRET=dev-secret-change-in-production
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - WORKSPACE_IMAGE=cloudide-workspace:latest
+      - CONTAINER_MEMORY_MB=4096
+      - CONTAINER_CPU_SHARES=2048
+      - DOCKER_NETWORK=cloudide-net
+      - ALLOWED_ORIGINS=http://localhost:3000
+      - WS_PING_INTERVAL_SEC=30
+      - WS_PONG_TIMEOUT_SEC=40
+    volumes:
+      # Mount Docker socket so the API can manage workspace containers.
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - cloudide-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # A test workspace container for local development and testing.
+  workspace-test:
+    build:
+      context: ./workspace
+      dockerfile: Dockerfile
+    stdin_open: true
+    tty: true
+    networks:
+      - cloudide-net
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2.0"
+        reservations:
+          memory: 2G
+          cpus: "1.0"
+    volumes:
+      - workspace-data:/workspace
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  cloudide-net:
+    driver: bridge
+
+volumes:
+  workspace-data:
+    driver: local
