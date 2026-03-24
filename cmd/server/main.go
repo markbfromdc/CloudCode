@@ -40,8 +40,10 @@ func main() {
 	hub := ws.NewHub(log)
 	go hub.Run()
 
-	// Initialize file tree handler.
+	// Initialize API handlers.
 	fileHandler := api.NewFileTreeHandler(log)
+	gitHandler := api.NewGitHandler(log)
+	fileOpsHandler := api.NewFileOpsHandler(log)
 
 	// Set up HTTP routes.
 	mux := http.NewServeMux()
@@ -125,6 +127,19 @@ func main() {
 			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 		}
 	})
+
+	// Git operations API.
+	mux.HandleFunc("/api/v1/git/status", gitHandler.HandleGitStatus)
+	mux.HandleFunc("/api/v1/git/log", gitHandler.HandleGitLog)
+	mux.HandleFunc("/api/v1/git/branches", gitHandler.HandleGitBranches)
+	mux.HandleFunc("/api/v1/git/commit", gitHandler.HandleGitCommit)
+	mux.HandleFunc("/api/v1/git/stage", gitHandler.HandleGitStage)
+	mux.HandleFunc("/api/v1/git/init", gitHandler.HandleGitInit)
+
+	// File create/delete/rename operations.
+	mux.HandleFunc("/api/v1/files/create", fileOpsHandler.HandleCreateFile)
+	mux.HandleFunc("/api/v1/files/delete", fileOpsHandler.HandleDeleteFile)
+	mux.HandleFunc("/api/v1/files/rename", fileOpsHandler.HandleRenameFile)
 
 	// WebSocket terminal endpoint.
 	wsHandler := ws.NewHandler(hub, cfg, containerMgr, log)
