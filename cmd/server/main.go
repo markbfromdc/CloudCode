@@ -1,6 +1,6 @@
 // Package main is the entry point for the Cloud IDE backend server.
 // It initializes configuration, container management, WebSocket hub,
-// and starts both HTTP and gRPC servers.
+// file tree API, and starts the HTTP server.
 package main
 
 import (
@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/markbfromdc/cloudcode/internal/api"
 	"github.com/markbfromdc/cloudcode/internal/config"
 	"github.com/markbfromdc/cloudcode/internal/container"
 	"github.com/markbfromdc/cloudcode/internal/logging"
@@ -38,10 +40,13 @@ func main() {
 	hub := ws.NewHub(log)
 	go hub.Run()
 
+	// Initialize file tree handler.
+	fileHandler := api.NewFileTreeHandler(log)
+
 	// Set up HTTP routes.
 	mux := http.NewServeMux()
 
-	// Health check endpoint.
+	// Health check endpoint (unauthenticated).
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -103,16 +108,35 @@ func main() {
 		json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
 	})
 
+	// File tree API - route by session ID pattern.
+	mux.HandleFunc("/api/v1/workspaces/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if strings.HasSuffix(path, "/files") {
+			fileHandler.HandleListFiles(w, r)
+		} else if strings.HasSuffix(path, "/files/content") {
+			if r.Method == http.MethodGet {
+				fileHandler.HandleReadFile(w, r)
+			} else if r.Method == http.MethodPut {
+				fileHandler.HandleWriteFile(w, r)
+			} else {
+				http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			}
+		} else {
+			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		}
+	})
+
 	// WebSocket terminal endpoint.
 	wsHandler := ws.NewHandler(hub, cfg, containerMgr, log)
 	mux.Handle("/ws/terminal", wsHandler)
 
 	// Apply middleware stack.
+	corsMiddleware := middleware.CORS(cfg.AllowedOrigins)
 	authMiddleware := middleware.Auth(cfg.JWTSecret, log)
 	logMiddleware := middleware.RequestLogger(log)
 
-	// Chain: logging -> auth -> handler
-	handler := logMiddleware(authMiddleware(mux))
+	// Chain: logging -> cors -> auth -> handler
+	handler := logMiddleware(corsMiddleware(authMiddleware(mux)))
 
 	// Create HTTP server with timeouts.
 	server := &http.Server{
