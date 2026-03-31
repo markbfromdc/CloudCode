@@ -27,3 +27,7 @@ Thumbs.db
 
 # Docker
 *.tar
+
+# Evaluation reports
+evaluation-report.json
+coverage.out

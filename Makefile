@@ -1,4 +1,4 @@
-.PHONY: build test run clean docker-build docker-up docker-down fmt vet coverage test-frontend test-all
+.PHONY: build test run clean docker-build docker-up docker-down fmt vet coverage test-frontend test-all evaluate
 
 # Build the API server binary.
 build:
@@ -52,3 +52,7 @@ test-frontend:
 
 # Run all backend and frontend tests.
 test-all: test test-frontend
+
+# Run project completion evaluation.
+evaluate:
+	go run ./cmd/evaluate -dir . -format both -output evaluation-report.json
