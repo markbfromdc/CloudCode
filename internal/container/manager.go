@@ -14,13 +14,25 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/google/uuid"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
 	"github.com/markbfromdc/cloudcode/internal/config"
 	"github.com/markbfromdc/cloudcode/internal/logging"
 )
 
+// DockerClient is the subset of the Docker API used by Manager.
+type DockerClient interface {
+	ContainerCreate(ctx context.Context, config *containerTypes.Config, hostConfig *containerTypes.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (containerTypes.CreateResponse, error)
+	ContainerStart(ctx context.Context, containerID string, options containerTypes.StartOptions) error
+	ContainerStop(ctx context.Context, containerID string, options containerTypes.StopOptions) error
+	ContainerRemove(ctx context.Context, containerID string, options containerTypes.RemoveOptions) error
+	ContainerExecCreate(ctx context.Context, container string, config types.ExecConfig) (types.IDResponse, error)
+	ContainerExecAttach(ctx context.Context, execID string, config types.ExecStartCheck) (types.HijackedResponse, error)
+}
+
 // Manager handles the lifecycle of workspace Docker containers.
 type Manager struct {
-	docker   client.APIClient
+	docker   DockerClient
 	cfg      *config.Config
 	log      *logging.Logger
 	sessions map[string]*WorkspaceSession
