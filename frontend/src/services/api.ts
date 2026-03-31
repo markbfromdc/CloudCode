@@ -4,12 +4,17 @@ const API_BASE = '/api/v1';
 
 /** Generic fetch wrapper with error handling. */
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = localStorage.getItem('cloudcode_token');
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...options?.headers as Record<string, string>,
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
+    headers,
   });
 
   if (!res.ok) {
@@ -45,7 +50,12 @@ export async function listFiles(sessionId: string, dirPath: string = '/'): Promi
 
 /** Read file content from workspace. */
 export async function readFile(sessionId: string, filePath: string): Promise<string> {
-  const res = await fetch(`${API_BASE}/workspaces/${sessionId}/files/content?path=${encodeURIComponent(filePath)}`);
+  const token = localStorage.getItem('cloudcode_token');
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const res = await fetch(`${API_BASE}/workspaces/${sessionId}/files/content?path=${encodeURIComponent(filePath)}`, { headers });
   if (!res.ok) throw new Error(`Failed to read file: ${res.status}`);
   return res.text();
 }

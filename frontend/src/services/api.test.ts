@@ -106,7 +106,8 @@ describe('API service', () => {
       const result = await readFile('s1', '/main.ts');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        '/api/v1/workspaces/s1/files/content?path=%2Fmain.ts'
+        '/api/v1/workspaces/s1/files/content?path=%2Fmain.ts',
+        expect.objectContaining({ headers: expect.any(Object) })
       );
       expect(result).toBe('file content here');
     });

@@ -1,4 +1,4 @@
-.PHONY: build test run clean docker-build docker-up docker-down
+.PHONY: build test run clean docker-build docker-up docker-down fmt vet coverage test-frontend test-all
 
 # Build the API server binary.
 build:
@@ -32,3 +32,23 @@ docker-down:
 # Run linting.
 lint:
 	golangci-lint run ./...
+
+# Format all Go source files.
+fmt:
+	go fmt ./...
+
+# Run Go vet on all packages.
+vet:
+	go vet ./...
+
+# Generate test coverage report.
+coverage:
+	go test -coverprofile=coverage.out ./internal/...
+	go tool cover -html=coverage.out
+
+# Run frontend tests.
+test-frontend:
+	cd frontend && npm test
+
+# Run all backend and frontend tests.
+test-all: test test-frontend

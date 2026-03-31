@@ -9,6 +9,7 @@ import StatusBar from './StatusBar';
 import CommandPalette from '../common/CommandPalette';
 import { useKeyboardShortcuts } from '../../hooks/useKeyboardShortcuts';
 import { useWorkspace } from '../../context/WorkspaceContext';
+import { listFiles } from '../../services/api';
 import type { FileNode } from '../../types';
 
 /** Demo file tree showing realistic workspace content. */
@@ -90,7 +91,7 @@ const DEMO_FILES: FileNode[] = [
 ];
 
 export default function IDELayout() {
-  const { dispatch } = useWorkspace();
+  const { state, dispatch } = useWorkspace();
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   const togglePalette = useCallback(() => {
@@ -100,8 +101,19 @@ export default function IDELayout() {
   useKeyboardShortcuts(togglePalette);
 
   useEffect(() => {
-    dispatch({ type: 'SET_FILES', files: DEMO_FILES });
-  }, [dispatch]);
+    if (state.sessionId) {
+      listFiles(state.sessionId)
+        .then((files) => {
+          dispatch({ type: 'SET_FILES', files });
+        })
+        .catch(() => {
+          // API not available - fall back to demo files
+          dispatch({ type: 'SET_FILES', files: DEMO_FILES });
+        });
+    } else {
+      dispatch({ type: 'SET_FILES', files: DEMO_FILES });
+    }
+  }, [state.sessionId, dispatch]);
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">

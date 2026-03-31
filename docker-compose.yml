@@ -14,7 +14,8 @@ services:
       - HTTP_PORT=8080
       - GRPC_PORT=9090
       - HOST_ADDR=0.0.0.0
-      - JWT_SECRET=dev-secret-change-in-production
+      # IMPORTANT: Set JWT_SECRET in your .env file or environment. Do not commit secrets.
+      - JWT_SECRET=${JWT_SECRET:-}
       - DOCKER_HOST=unix:///var/run/docker.sock
       - WORKSPACE_IMAGE=cloudide-workspace:latest
       - CONTAINER_MEMORY_MB=4096

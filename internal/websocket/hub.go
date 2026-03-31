@@ -21,6 +21,9 @@ type Hub struct {
 	// unregister is a channel for client disconnection requests.
 	unregister chan *Client
 
+	// done is closed to signal the Run loop to exit.
+	done chan struct{}
+
 	mu  sync.RWMutex
 	log *logging.Logger
 }
@@ -31,12 +34,13 @@ func NewHub(log *logging.Logger) *Hub {
 		clients:    make(map[string]*Client),
 		register:   make(chan *Client, 64),
 		unregister: make(chan *Client, 64),
+		done:       make(chan struct{}),
 		log:        log.WithField("component", "websocket-hub"),
 	}
 }
 
 // Run starts the Hub's main event loop. This must be called in a goroutine.
-// It processes client registrations and unregistrations.
+// It processes client registrations and unregistrations until Stop is called.
 func (h *Hub) Run() {
 	for {
 		select {
@@ -54,8 +58,27 @@ func (h *Hub) Run() {
 			}
 			h.mu.Unlock()
 			h.log.Info("client unregistered: session=%s", client.SessionID)
+
+		case <-h.done:
+			h.log.Info("hub stopping, closing all client connections")
+			h.mu.Lock()
+			for id, client := range h.clients {
+				close(client.send)
+				if client.conn != nil {
+					client.conn.Close()
+				}
+				delete(h.clients, id)
+			}
+			h.mu.Unlock()
+			return
 		}
 	}
+}
+
+// Stop gracefully shuts down the hub by signaling the Run loop to exit
+// and closing all active client connections.
+func (h *Hub) Stop() {
+	close(h.done)
 }
 
 // Register adds a new client to the hub.

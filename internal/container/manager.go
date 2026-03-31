@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	containerTypes "github.com/docker/docker/api/types/container"
@@ -32,11 +33,12 @@ type DockerClient interface {
 
 // Manager handles the lifecycle of workspace Docker containers.
 type Manager struct {
-	docker   DockerClient
-	cfg      *config.Config
-	log      *logging.Logger
-	sessions map[string]*WorkspaceSession
-	mu       sync.RWMutex
+	docker      DockerClient
+	cfg         *config.Config
+	log         *logging.Logger
+	sessions    map[string]*WorkspaceSession
+	mu          sync.RWMutex
+	stopCleanup chan struct{}
 }
 
 // WorkspaceSession tracks an active workspace container and its metadata.
@@ -45,6 +47,7 @@ type WorkspaceSession struct {
 	ContainerID string
 	UserID      string
 	Status      string
+	CreatedAt   time.Time
 }
 
 // ExecSession represents an active exec attachment to a container,
@@ -66,10 +69,11 @@ func NewManager(cfg *config.Config, log *logging.Logger) (*Manager, error) {
 	}
 
 	return &Manager{
-		docker:   dockerClient,
-		cfg:      cfg,
-		log:      log.WithField("component", "container-manager"),
-		sessions: make(map[string]*WorkspaceSession),
+		docker:      dockerClient,
+		cfg:         cfg,
+		log:         log.WithField("component", "container-manager"),
+		sessions:    make(map[string]*WorkspaceSession),
+		stopCleanup: make(chan struct{}),
 	}, nil
 }
 
@@ -125,6 +129,7 @@ func (m *Manager) CreateWorkspace(ctx context.Context, userID string) (*Workspac
 		ContainerID: resp.ID,
 		UserID:      userID,
 		Status:      "running",
+		CreatedAt:   time.Now(),
 	}
 
 	m.mu.Lock()
@@ -213,6 +218,86 @@ func container_ExecConfig(containerID string) types.ExecConfig {
 		Tty:          true,
 		Cmd:          []string{"/bin/bash"},
 	}
+}
+
+// Shutdown gracefully stops all active workspace containers.
+// It respects the provided context for cancellation/timeout.
+func (m *Manager) Shutdown(ctx context.Context) error {
+	// Signal cleanup loop to stop.
+	select {
+	case <-m.stopCleanup:
+		// Already closed.
+	default:
+		close(m.stopCleanup)
+	}
+
+	m.mu.Lock()
+	sessions := make([]*WorkspaceSession, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		sessions = append(sessions, s)
+	}
+	m.mu.Unlock()
+
+	var firstErr error
+	for _, s := range sessions {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		m.log.Info("shutting down workspace: session=%s container=%s", s.SessionID, s.ContainerID[:12])
+		timeoutSec := 5
+		stopOpts := containerTypes.StopOptions{Timeout: &timeoutSec}
+		if err := m.docker.ContainerStop(ctx, s.ContainerID, stopOpts); err != nil {
+			m.log.Warn("failed to stop container %s: %v", s.ContainerID[:12], err)
+		}
+		if err := m.docker.ContainerRemove(ctx, s.ContainerID, containerTypes.RemoveOptions{Force: true}); err != nil {
+			m.log.Error("failed to remove container %s: %v", s.ContainerID[:12], err)
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+
+		m.mu.Lock()
+		delete(m.sessions, s.SessionID)
+		m.mu.Unlock()
+	}
+
+	return firstErr
+}
+
+// StartCleanupLoop runs a background goroutine that periodically removes
+// sessions older than maxAge. Call this after creating the manager.
+// The loop stops when Shutdown is called or stopCleanup is closed.
+func (m *Manager) StartCleanupLoop(interval time.Duration, maxAge time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				m.mu.RLock()
+				var expired []string
+				for id, s := range m.sessions {
+					if time.Since(s.CreatedAt) > maxAge {
+						expired = append(expired, id)
+					}
+				}
+				m.mu.RUnlock()
+
+				for _, id := range expired {
+					m.log.Info("cleaning up expired session: %s", id)
+					if err := m.StopWorkspace(context.Background(), id); err != nil {
+						m.log.Warn("failed to clean up session %s: %v", id, err)
+					}
+				}
+			case <-m.stopCleanup:
+				return
+			}
+		}
+	}()
 }
 
 func int64Ptr(v int64) *int64 {

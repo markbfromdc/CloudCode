@@ -11,6 +11,8 @@ interface WorkspaceState {
   isPanelOpen: boolean;
   isSidebarOpen: boolean;
   isConnected: boolean;
+  isLoading: boolean;
+  error: string | null;
 }
 
 type Action =
@@ -20,13 +22,16 @@ type Action =
   | { type: 'CLOSE_TAB'; tabId: string }
   | { type: 'SET_ACTIVE_TAB'; tabId: string }
   | { type: 'UPDATE_TAB_CONTENT'; tabId: string; content: string }
+  | { type: 'SET_TAB_CONTENT'; tabId: string; content: string }
   | { type: 'MARK_TAB_SAVED'; tabId: string }
   | { type: 'SET_ACTIVITY'; activity: ActivityBarItem }
   | { type: 'SET_PANEL'; panel: PanelTab }
   | { type: 'TOGGLE_PANEL' }
   | { type: 'TOGGLE_SIDEBAR' }
   | { type: 'SET_CONNECTED'; connected: boolean }
-  | { type: 'TOGGLE_FILE_EXPAND'; path: string };
+  | { type: 'TOGGLE_FILE_EXPAND'; path: string }
+  | { type: 'SET_LOADING'; isLoading: boolean }
+  | { type: 'SET_ERROR'; error: string | null };
 
 const initialState: WorkspaceState = {
   sessionId: null,
@@ -38,6 +43,8 @@ const initialState: WorkspaceState = {
   isPanelOpen: true,
   isSidebarOpen: true,
   isConnected: false,
+  isLoading: false,
+  error: null,
 };
 
 function toggleExpand(nodes: FileNode[], path: string): FileNode[] {
@@ -92,6 +99,14 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
         ),
       };
 
+    case 'SET_TAB_CONTENT':
+      return {
+        ...state,
+        openTabs: state.openTabs.map((t) =>
+          t.id === action.tabId ? { ...t, content: action.content } : t
+        ),
+      };
+
     case 'MARK_TAB_SAVED':
       return {
         ...state,
@@ -121,6 +136,12 @@ function reducer(state: WorkspaceState, action: Action): WorkspaceState {
 
     case 'TOGGLE_FILE_EXPAND':
       return { ...state, files: toggleExpand(state.files, action.path) };
+
+    case 'SET_LOADING':
+      return { ...state, isLoading: action.isLoading };
+
+    case 'SET_ERROR':
+      return { ...state, error: action.error };
 
     default:
       return state;

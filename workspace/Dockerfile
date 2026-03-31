@@ -107,7 +107,7 @@ RUN echo 'export PS1="\[\033[01;32m\]\u@cloudide\[\033[00m\]:\[\033[01;34m\]\w\[
 
 # Health check: ensure the shell is responsive.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD bash -c "echo healthy"
+    CMD ["bash", "-c", "echo ok"]
 
 # Default command: start an interactive bash shell.
 CMD ["/bin/bash"]

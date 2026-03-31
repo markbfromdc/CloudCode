@@ -38,6 +38,16 @@ type Config struct {
 	AllowedOrigins []string
 	JWTSecret      string
 	SessionTimeout time.Duration
+
+	// Rate limiting
+	RateLimitRPS   float64
+	RateLimitBurst int
+
+	// Observability
+	LogLevel string
+
+	// Shutdown
+	ShutdownTimeoutSec int
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -67,6 +77,13 @@ func Load() (*Config, error) {
 		AllowedOrigins: []string{getEnvStr("ALLOWED_ORIGINS", "https://ide.cloudcode.dev")},
 		JWTSecret:      getEnvStr("JWT_SECRET", ""),
 		SessionTimeout: time.Duration(getEnvInt("SESSION_TIMEOUT_HOURS", 24)) * time.Hour,
+
+		RateLimitRPS:   getEnvFloat64("RATE_LIMIT_RPS", 100),
+		RateLimitBurst: getEnvInt("RATE_LIMIT_BURST", 200),
+
+		LogLevel: getEnvStr("LOG_LEVEL", "info"),
+
+		ShutdownTimeoutSec: getEnvInt("SHUTDOWN_TIMEOUT_SEC", 30),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -108,6 +125,15 @@ func getEnvInt(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {
 			return i
+		}
+	}
+	return fallback
+}
+
+func getEnvFloat64(key string, fallback float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
 	}
 	return fallback

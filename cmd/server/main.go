@@ -36,6 +36,9 @@ func main() {
 		log.Fatal("failed to initialize container manager: %v", err)
 	}
 
+	// Start session cleanup loop.
+	containerMgr.StartCleanupLoop(5*time.Minute, time.Duration(cfg.ContainerTimeoutMin)*time.Minute)
+
 	// Initialize WebSocket hub and start its event loop.
 	hub := ws.NewHub(log)
 	go hub.Run()
@@ -45,22 +48,11 @@ func main() {
 	gitHandler := api.NewGitHandler(log)
 	fileOpsHandler := api.NewFileOpsHandler(log)
 
-	// Set up HTTP routes.
-	mux := http.NewServeMux()
-
-	// Health check endpoint (unauthenticated).
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":            "healthy",
-			"active_sessions":   hub.ActiveSessions(),
-			"active_workspaces": containerMgr.ActiveWorkspaces(),
-			"timestamp":         time.Now().UTC().Format(time.RFC3339),
-		})
-	})
+	// Set up authenticated HTTP routes.
+	appMux := http.NewServeMux()
 
 	// Workspace management API.
-	mux.HandleFunc("/api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
+	appMux.HandleFunc("/api/v1/workspaces", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 			return
@@ -88,7 +80,7 @@ func main() {
 		})
 	})
 
-	mux.HandleFunc("/api/v1/workspaces/stop", func(w http.ResponseWriter, r *http.Request) {
+	appMux.HandleFunc("/api/v1/workspaces/stop", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 			return
@@ -111,7 +103,7 @@ func main() {
 	})
 
 	// File tree API - route by session ID pattern.
-	mux.HandleFunc("/api/v1/workspaces/", func(w http.ResponseWriter, r *http.Request) {
+	appMux.HandleFunc("/api/v1/workspaces/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		if strings.HasSuffix(path, "/files") {
 			fileHandler.HandleListFiles(w, r)
@@ -129,29 +121,50 @@ func main() {
 	})
 
 	// Git operations API.
-	mux.HandleFunc("/api/v1/git/status", gitHandler.HandleGitStatus)
-	mux.HandleFunc("/api/v1/git/log", gitHandler.HandleGitLog)
-	mux.HandleFunc("/api/v1/git/branches", gitHandler.HandleGitBranches)
-	mux.HandleFunc("/api/v1/git/commit", gitHandler.HandleGitCommit)
-	mux.HandleFunc("/api/v1/git/stage", gitHandler.HandleGitStage)
-	mux.HandleFunc("/api/v1/git/init", gitHandler.HandleGitInit)
+	appMux.HandleFunc("/api/v1/git/status", gitHandler.HandleGitStatus)
+	appMux.HandleFunc("/api/v1/git/log", gitHandler.HandleGitLog)
+	appMux.HandleFunc("/api/v1/git/branches", gitHandler.HandleGitBranches)
+	appMux.HandleFunc("/api/v1/git/commit", gitHandler.HandleGitCommit)
+	appMux.HandleFunc("/api/v1/git/stage", gitHandler.HandleGitStage)
+	appMux.HandleFunc("/api/v1/git/init", gitHandler.HandleGitInit)
 
 	// File create/delete/rename operations.
-	mux.HandleFunc("/api/v1/files/create", fileOpsHandler.HandleCreateFile)
-	mux.HandleFunc("/api/v1/files/delete", fileOpsHandler.HandleDeleteFile)
-	mux.HandleFunc("/api/v1/files/rename", fileOpsHandler.HandleRenameFile)
+	appMux.HandleFunc("/api/v1/files/create", fileOpsHandler.HandleCreateFile)
+	appMux.HandleFunc("/api/v1/files/delete", fileOpsHandler.HandleDeleteFile)
+	appMux.HandleFunc("/api/v1/files/rename", fileOpsHandler.HandleRenameFile)
 
 	// WebSocket terminal endpoint.
 	wsHandler := ws.NewHandler(hub, cfg, containerMgr, log)
-	mux.Handle("/ws/terminal", wsHandler)
+	appMux.Handle("/ws/terminal", wsHandler)
 
-	// Apply middleware stack.
-	corsMiddleware := middleware.CORS(cfg.AllowedOrigins)
+	// Apply auth middleware to the app routes.
 	authMiddleware := middleware.Auth(cfg.JWTSecret, log)
+	authedHandler := authMiddleware(appMux)
+
+	// Create root mux with /health outside auth.
+	rootMux := http.NewServeMux()
+
+	// Health check endpoint (unauthenticated).
+	rootMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":            "healthy",
+			"active_sessions":   hub.ActiveSessions(),
+			"active_workspaces": containerMgr.ActiveWorkspaces(),
+			"timestamp":         time.Now().UTC().Format(time.RFC3339),
+		})
+	})
+
+	// All other routes go through auth.
+	rootMux.Handle("/", authedHandler)
+
+	// Apply outer middleware stack: logging -> rate limiter -> request ID -> cors -> handler
+	rateLimiter := middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst)
+	corsMiddleware := middleware.CORS(cfg.AllowedOrigins)
 	logMiddleware := middleware.RequestLogger(log)
 
-	// Chain: logging -> cors -> auth -> handler
-	handler := logMiddleware(corsMiddleware(authMiddleware(mux)))
+	// Chain: logging -> rate limiter -> request ID -> cors -> handler
+	handler := logMiddleware(rateLimiter.Middleware(middleware.RequestID(corsMiddleware(rootMux))))
 
 	// Create HTTP server with timeouts.
 	server := &http.Server{
@@ -182,12 +195,23 @@ func main() {
 	<-stop
 	log.Info("shutting down server...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownTimeout := time.Duration(cfg.ShutdownTimeoutSec) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
 		log.Error("server shutdown error: %v", err)
 	}
+
+	hub.Stop()
+	log.Info("websocket hub stopped")
+
+	if err := containerMgr.Shutdown(ctx); err != nil {
+		log.Error("container manager shutdown error: %v", err)
+	}
+	log.Info("container manager stopped")
+
+	rateLimiter.Stop()
 
 	log.Info("server stopped")
 }

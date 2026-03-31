@@ -1,6 +1,7 @@
 import { ChevronRight, ChevronDown, File, Folder, FolderOpen } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { getLanguageForFile } from '../../hooks/useFileLanguage';
+import { readFile } from '../../services/api';
 import type { FileNode, EditorTab } from '../../types';
 
 /** Returns a color class based on file extension for visual distinction. */
@@ -37,6 +38,16 @@ function FileTreeItem({ node, depth }: { node: FileNode; depth: number }) {
         isDirty: false,
       };
       dispatch({ type: 'OPEN_FILE', tab });
+      // Load file content from API
+      if (state.sessionId) {
+        readFile(state.sessionId, node.path)
+          .then((content) => {
+            dispatch({ type: 'SET_TAB_CONTENT', tabId: node.path, content });
+          })
+          .catch(() => {
+            // File content couldn't be loaded - keep empty
+          });
+      }
     }
   };
 

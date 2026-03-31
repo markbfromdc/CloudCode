@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { Search } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { getLanguageForFile } from '../../hooks/useFileLanguage';
+import { readFile } from '../../services/api';
 import type { EditorTab, FileNode } from '../../types';
 
 interface Command {
@@ -134,9 +135,19 @@ export default function CommandPalette({ isOpen, onClose }: CommandPaletteProps)
             isDirty: false,
           };
           dispatch({ type: 'OPEN_FILE', tab });
+          // Load file content from API
+          if (state.sessionId) {
+            readFile(state.sessionId, f.path)
+              .then((content) => {
+                dispatch({ type: 'SET_TAB_CONTENT', tabId: f.path, content });
+              })
+              .catch(() => {
+                // File content couldn't be loaded - keep empty
+              });
+          }
         },
       }));
-  }, [query, isCommandMode, commands, allFiles, dispatch]);
+  }, [query, isCommandMode, commands, allFiles, dispatch, state.sessionId]);
 
   useEffect(() => {
     if (isOpen) {

@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gorilla/websocket"
@@ -91,8 +92,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	h.hub.Register(client)
 
+	// Create a cancellable context that stops when the client disconnects.
+	// ReadPump calls client.cancelFunc in its defer, which cancels this context.
+	ctx, cancel := context.WithCancel(context.Background())
+	client.SetCancelFunc(cancel)
+
 	// Start the container stdout reader that feeds data to the client's send channel.
-	go h.streamContainerOutput(client, execSession)
+	go h.streamContainerOutput(ctx, client, execSession)
 
 	// Start the read and write pumps.
 	go client.WritePump()
@@ -100,9 +106,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // streamContainerOutput reads from the container's stdout and sends it to the WebSocket client.
-func (h *Handler) streamContainerOutput(client *Client, exec *container.ExecSession) {
+// It stops when the context is cancelled (client disconnect).
+func (h *Handler) streamContainerOutput(ctx context.Context, client *Client, exec *container.ExecSession) {
 	buf := make([]byte, 4096)
 	for {
+		select {
+		case <-ctx.Done():
+			h.log.Info("container output stream cancelled for session=%s", client.SessionID)
+			return
+		default:
+		}
+
 		n, err := exec.Stdout.Read(buf)
 		if err != nil {
 			h.log.Info("container output stream ended for session=%s: %v", client.SessionID, err)

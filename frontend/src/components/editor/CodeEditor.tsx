@@ -1,10 +1,44 @@
+import { useEffect, useCallback, useState } from 'react';
 import Editor from '@monaco-editor/react';
 import { useWorkspace } from '../../context/WorkspaceContext';
+import { writeFile } from '../../services/api';
 
 export default function CodeEditor() {
   const { state, dispatch } = useWorkspace();
+  const [showSaved, setShowSaved] = useState(false);
 
   const activeTab = state.openTabs.find((t) => t.id === state.activeTabId);
+
+  const handleSave = useCallback(() => {
+    if (!activeTab || !activeTab.isDirty) return;
+    if (state.sessionId) {
+      writeFile(state.sessionId, activeTab.path, activeTab.content)
+        .then(() => {
+          dispatch({ type: 'MARK_TAB_SAVED', tabId: activeTab.id });
+          setShowSaved(true);
+          setTimeout(() => setShowSaved(false), 1500);
+        })
+        .catch(() => {
+          // Save failed silently - tab stays dirty
+        });
+    } else {
+      // No session - just mark as saved locally
+      dispatch({ type: 'MARK_TAB_SAVED', tabId: activeTab.id });
+      setShowSaved(true);
+      setTimeout(() => setShowSaved(false), 1500);
+    }
+  }, [activeTab, state.sessionId, dispatch]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        handleSave();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleSave]);
 
   if (!activeTab) {
     return (
@@ -24,7 +58,12 @@ export default function CodeEditor() {
   }
 
   return (
-    <div className="flex-1 overflow-hidden">
+    <div className="flex-1 overflow-hidden relative">
+      {showSaved && (
+        <div className="absolute top-2 right-4 z-10 bg-[var(--success)] text-white text-xs px-2 py-1 rounded shadow">
+          Saved
+        </div>
+      )}
       <Editor
         height="100%"
         language={activeTab.language}

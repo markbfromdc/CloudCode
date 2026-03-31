@@ -39,6 +39,9 @@ type Client struct {
 
 	// maxMessageSize is the maximum allowed message size from the client.
 	maxMessageSize int64
+
+	// cancelFunc cancels the context for the container output stream goroutine.
+	cancelFunc func()
 }
 
 // ClientConfig holds the parameters needed to create a new Client.
@@ -82,6 +85,9 @@ func NewClient(cfg ClientConfig) *Client {
 // written into the container's PTY.
 func (c *Client) ReadPump() {
 	defer func() {
+		if c.cancelFunc != nil {
+			c.cancelFunc()
+		}
 		c.hub.Unregister(c)
 		c.conn.Close()
 		if c.containerWriter != nil {
@@ -181,6 +187,12 @@ func (c *Client) WritePump() {
 			c.log.Debug("ping sent")
 		}
 	}
+}
+
+// SetCancelFunc sets the cancel function that is called when ReadPump exits,
+// allowing dependent goroutines (e.g., streamContainerOutput) to be notified.
+func (c *Client) SetCancelFunc(cancel func()) {
+	c.cancelFunc = cancel
 }
 
 // Send queues a message to be sent to the WebSocket client.

@@ -24,7 +24,7 @@ describe('Git service', () => {
 
       const result = await getGitStatus();
 
-      expect(mockFetch).toHaveBeenCalledWith('/api/v1/git/status');
+      expect(mockFetch).toHaveBeenCalledWith('/api/v1/git/status', expect.objectContaining({ headers: expect.any(Object) }));
       expect(result).toEqual(statuses);
     });
 
@@ -34,7 +34,8 @@ describe('Git service', () => {
       await getGitStatus('/workspace/project');
 
       expect(mockFetch).toHaveBeenCalledWith(
-        '/api/v1/git/status?workspace=%2Fworkspace%2Fproject'
+        '/api/v1/git/status?workspace=%2Fworkspace%2Fproject',
+        expect.objectContaining({ headers: expect.any(Object) })
       );
     });
 
